@@ -313,7 +313,15 @@ pub fn run() {
                 .min_inner_size(880.0, 580.0)
                 .center()
                 .resizable(true)
-                .additional_browser_args("--ignore-certificate-errors --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
+                .additional_browser_args(
+                    "--ignore-certificate-errors \
+                     --use-fake-ui-for-media-stream \
+                     --autoplay-policy=no-user-gesture-required \
+                     --enable-gpu-rasterization \
+                     --enable-zero-copy \
+                     --ignore-gpu-blocklist \
+                     --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling"
+                )
                 .initialization_script(include_str!("desktop-bridge.js"))
                 .on_navigation(move |url| {
                     if url.scheme() == "mellow-desktop" {
