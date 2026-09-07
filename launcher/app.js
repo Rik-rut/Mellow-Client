@@ -20,17 +20,32 @@ function setStatus(text, kind) {
   statusEl.className = 'status' + (kind ? ' ' + kind : '');
 }
 
+const FALLBACK_LOGO = 'mellow.svg';
+
+function serverLogo(url) {
+  return url.replace(/\/+$/, '') + '/mellow.svg';
+}
+
 function makeRow(url, name, onOpen, onRemove) {
   const row = document.createElement('div');
   row.className = 'server-row';
 
+  const fav = document.createElement('span');
+  fav.className = 'fav';
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = serverLogo(url);
+  img.addEventListener('error', () => { img.src = FALLBACK_LOGO; }, { once: true });
   const dot = document.createElement('span');
   dot.className = 'dot';
+  fav.appendChild(img);
+  fav.appendChild(dot);
+
   const host = document.createElement('span');
   host.className = 'host';
   host.textContent = name ? name + ' — ' + url : url;
 
-  row.appendChild(dot);
+  row.appendChild(fav);
   row.appendChild(host);
 
   row.addEventListener('click', () => onOpen(url));
