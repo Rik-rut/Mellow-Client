@@ -52,6 +52,24 @@ impl AppState {
     }
 }
 
+/* ────────────────────────────── external urls ───────────────────────── */
+
+fn open_external_url(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
 /* ────────────────────────────── urls ────────────────────────────────── */
 
 fn normalize_url(input: &str) -> Result<String, String> {
@@ -313,6 +331,7 @@ pub fn run() {
                 .min_inner_size(880.0, 580.0)
                 .center()
                 .resizable(true)
+                .disable_drag_drop_handler()
                 .additional_browser_args(
                     "--ignore-certificate-errors \
                      --autoplay-policy=no-user-gesture-required \
@@ -326,24 +345,50 @@ pub fn run() {
                 .initialization_script(include_str!("desktop-bridge.js"))
                 .on_navigation(move |url| {
                     if url.scheme() == "mellow-desktop" {
-                        let h = nav_handle.clone();
-                        let hc = h.clone();
-                        let _ = h.run_on_main_thread(move || {
-                            let Some(w) = hc.get_webview_window("main") else { return };
-                            let base = hc
-                                .state::<AppState>()
-                                .launcher_url
-                                .lock()
-                                .ok()
-                                .and_then(|u| u.clone())
-                                .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
-                            let base = base.split('?').next().unwrap_or(&base).to_string();
-                            if let Ok(u) = base.parse::<tauri::Url>() {
-                                let _ = w.navigate(u);
-                                let _ = w.set_title("Mellow");
+                        if url.host_str() == Some("open-url") {
+                            if let Some((_, target)) = url.query_pairs().find(|(k, _)| k == "url") {
+                                open_external_url(&target);
+                            }
+                            return false;
+                        }
+                        if url.host_str() == Some("switch-server") || url.path() == "/switch-server" {
+                            let h = nav_handle.clone();
+                            let hc = h.clone();
+                            let _ = h.run_on_main_thread(move || {
+                                let Some(w) = hc.get_webview_window("main") else { return };
+                                let base = hc
+                                    .state::<AppState>()
+                                    .launcher_url
+                                    .lock()
+                                    .ok()
+                                    .and_then(|u| u.clone())
+                                    .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
+                                let base = base.split('?').next().unwrap_or(&base).to_string();
+                                if let Ok(u) = base.parse::<tauri::Url>() {
+                                    let _ = w.navigate(u);
+                                    let _ = w.set_title("Mellow");
+                                }
+                            });
+                            return false;
+                        }
+                        return false;
+                    }
+                    if url.scheme() == "http" || url.scheme() == "https" {
+                        let is_launcher = url.host_str() == Some("tauri.localhost")
+                            || url.host_str() == Some("localhost")
+                            || url.scheme() == "tauri";
+                        let settings = nav_handle.state::<AppState>().load();
+                        let is_server = settings.servers.iter().chain(settings.last.iter()).any(|s| {
+                            if let Ok(su) = s.parse::<tauri::Url>() {
+                                su.host_str() == url.host_str() && su.port() == url.port()
+                            } else {
+                                false
                             }
                         });
-                        return false;
+                        if !is_launcher && !is_server {
+                            open_external_url(url.as_str());
+                            return false;
+                        }
                     }
                     true
                 })

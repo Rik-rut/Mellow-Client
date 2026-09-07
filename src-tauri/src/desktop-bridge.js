@@ -100,6 +100,38 @@
     }
   });
 
+  // Intercept all clicks on external links so they open in the user's default OS browser
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a || !a.href) return;
+    var href = a.href;
+    if (/^https?:/i.test(href)) {
+      try {
+        var linkUrl = new URL(href, window.location.href);
+        if (linkUrl.host !== window.location.host) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.location.href = 'mellow-desktop://open-url?url=' + encodeURIComponent(href);
+        }
+      } catch (_) {}
+    }
+  }, true);
+
+  // Intercept window.open calls for external URLs
+  var origOpen = window.open;
+  window.open = function (url) {
+    if (url && typeof url === 'string' && /^https?:/i.test(url)) {
+      try {
+        var parsed = new URL(url, window.location.href);
+        if (parsed.host !== window.location.host) {
+          window.location.href = 'mellow-desktop://open-url?url=' + encodeURIComponent(url);
+          return null;
+        }
+      } catch (_) {}
+    }
+    return origOpen ? origOpen.apply(this, arguments) : null;
+  };
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', inject);
   } else {
