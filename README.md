@@ -42,3 +42,7 @@ Requires: Rust (rustc/cargo), WebView2 runtime (preinstalled on Win 10/11), VS B
 - `launcher/` — the connect screen (plain HTML/CSS/JS)
 - `src-tauri/` — Rust shell: commands (`connect`, `scan_lan`, `desktop_notify`, …), tray, NSIS bundling
 - `SPIKE.md` — verification checklist / results for webview behaviors
+
+Note: the dev/release binary is `mellow-client.exe`; the installed app is **Mellow.exe**
+(start menu / desktop, per `productName`). Uninstalling removes only app files — chat data
+lives on the server, and `%APPDATA%\dev.mellow.client` (saved servers) is left in place.
