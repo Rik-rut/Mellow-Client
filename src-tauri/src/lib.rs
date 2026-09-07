@@ -319,6 +319,8 @@ pub fn run() {
                      --enable-gpu-rasterization \
                      --enable-zero-copy \
                      --ignore-gpu-blocklist \
+                     --enable-accelerated-video-decode \
+                     --enable-accelerated-video-encode \
                      --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling"
                 )
                 .initialization_script(include_str!("desktop-bridge.js"))
