@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Main window: bundled launcher plus any reachable Mellow server origin (for the notify/badge IPC bridge on the remote page).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default"
+  ],
+  "remote": {
+    "urls": ["http://*:*/*", "https://*:*/*"]
+  },
+  "local": true
+}

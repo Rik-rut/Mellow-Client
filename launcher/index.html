@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mellow — Connect</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="logo">M</div>
+      <h1>Mellow</h1>
+      <p class="subtitle">Connect to your server to sign in</p>
+
+      <div id="unreachable-banner" class="banner warn" hidden>
+        Your last server was unreachable. Pick a server below or enter a new address.
+      </div>
+
+      <div id="saved-wrap" hidden>
+        <div class="label">Saved servers</div>
+        <div id="saved-list"></div>
+      </div>
+
+      <form id="connect-form">
+        <input type="text" id="server-input" placeholder="Server address — e.g. 192.168.1.5:6767"
+               autocomplete="off" spellcheck="false">
+        <button type="submit" id="connect-btn">Connect</button>
+      </form>
+
+      <div id="status" class="status"></div>
+
+      <div class="divider"><span>or found on your LAN</span></div>
+      <div id="discovered-list"><div class="muted small">Scanning…</div></div>
+      <button type="button" id="rescan-btn" class="ghost">Re-scan network</button>
+
+      <p class="hint">The server must be running on this network. Address, IP, or full URL all work —
+        port defaults to 6767.</p>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
