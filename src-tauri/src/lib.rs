@@ -315,7 +315,6 @@ pub fn run() {
                 .resizable(true)
                 .additional_browser_args(
                     "--ignore-certificate-errors \
-                     --use-fake-ui-for-media-stream \
                      --autoplay-policy=no-user-gesture-required \
                      --enable-gpu-rasterization \
                      --enable-zero-copy \
