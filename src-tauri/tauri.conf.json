@@ -8,20 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Mellow",
-        "url": "index.html",
-        "width": 1180,
-        "height": 760,
-        "minWidth": 880,
-        "minHeight": 580,
-        "center": true,
-        "resizable": true,
-        "additionalBrowserArgs": "--ignore-certificate-errors --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
@@ -41,7 +28,9 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "startMenuFolder": "Mellow"
+        "startMenuFolder": "Mellow",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
       }
     }
   }

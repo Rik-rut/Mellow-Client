@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, State, WebviewWindow,
+    Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_notification::NotificationExt;
 
@@ -115,7 +115,17 @@ struct ServerInfo {
 }
 
 #[tauri::command]
-fn get_servers(state: State<'_, AppState>) -> ServerInfo {
+fn get_servers(app: tauri::AppHandle, state: State<'_, AppState>) -> ServerInfo {
+    if let Some(win) = app.get_webview_window("main") {
+        if let Ok(url) = win.url() {
+            let s = url.to_string();
+            if !s.starts_with("about:") {
+                if let Ok(mut lock) = state.launcher_url.lock() {
+                    *lock = Some(s);
+                }
+            }
+        }
+    }
     let s = state.load();
     let last_unreachable = match &s.last {
         Some(u) => !tcp_reachable(u, Duration::from_millis(800)),
@@ -174,13 +184,13 @@ fn forget_server(state: State<'_, AppState>, url: String) {
 
 #[tauri::command]
 fn switch_server(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let win = app.get_webview_window("main").ok_or("no main window")?;
     let launcher = state
         .launcher_url
         .lock()
         .map_err(|_| "state lock".to_string())?
         .clone()
-        .ok_or("launcher url unknown")?;
-    let win = app.get_webview_window("main").ok_or("no main window")?;
+        .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
     win.navigate(launcher.parse::<tauri::Url>().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let _ = win.set_title("Mellow");
@@ -285,15 +295,61 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir().expect("config dir");
-            let launcher_url = {
-                let win = app.get_webview_window("main").expect("main window");
-                win.url().ok().map(|u| u.to_string())
-            };
             app.manage(AppState {
                 settings_path: config_dir.join("settings.json"),
-                launcher_url: Mutex::new(launcher_url),
+                launcher_url: Mutex::new(None),
                 tray: Mutex::new(None),
             });
+
+            // Single window, created here so we can attach the native bridge:
+            // - initialization_script injects the "change server" rail button on
+            //   server pages without needing remote IPC (custom commands are
+            //   ACL-blocked on remote origins);
+            // - on_navigation catches mellow-desktop:// from that button.
+            let nav_handle = handle.clone();
+            let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("Mellow")
+                .inner_size(1180.0, 760.0)
+                .min_inner_size(880.0, 580.0)
+                .center()
+                .resizable(true)
+                .additional_browser_args("--ignore-certificate-errors --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
+                .initialization_script(include_str!("desktop-bridge.js"))
+                .on_navigation(move |url| {
+                    if url.scheme() == "mellow-desktop" {
+                        let h = nav_handle.clone();
+                        let hc = h.clone();
+                        let _ = h.run_on_main_thread(move || {
+                            let Some(w) = hc.get_webview_window("main") else { return };
+                            let base = hc
+                                .state::<AppState>()
+                                .launcher_url
+                                .lock()
+                                .ok()
+                                .and_then(|u| u.clone())
+                                .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
+                            let base = base.split('?').next().unwrap_or(&base).to_string();
+                            if let Ok(u) = base.parse::<tauri::Url>() {
+                                let _ = w.navigate(u);
+                                let _ = w.set_title("Mellow");
+                            }
+                        });
+                        return false;
+                    }
+                    true
+                })
+                .build()?;
+
+            if let Some(icon) = app.default_window_icon() {
+                let _ = win.set_icon(icon.clone());
+            }
+
+            let launcher = win.url().ok().map(|u| u.to_string());
+            if let Some(ref l) = launcher {
+                if !l.starts_with("about:") {
+                    *app.state::<AppState>().launcher_url.lock().unwrap() = launcher;
+                }
+            }
 
             // Tray with menu
             let show_i = MenuItem::with_id(app, "show", "Open Mellow", true, None::<&str>)?;
@@ -313,9 +369,16 @@ pub fn run() {
                     }
                     "switch" => {
                         if let Some(state) = app.try_state::<AppState>() {
-                            if let Ok(u) = state.launcher_url.lock() {
-                                if let (Some(url), Some(w)) = (u.clone(), app.get_webview_window("main")) {
-                                    let _ = url.parse::<tauri::Url>().map(|u| w.navigate(u));
+                            let url_str = state
+                                .launcher_url
+                                .lock()
+                                .ok()
+                                .and_then(|u| u.clone())
+                                .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
+                            if let Some(w) = app.get_webview_window("main") {
+                                if let Ok(u) = url_str.parse::<tauri::Url>() {
+                                    let _ = w.navigate(u);
+                                    let _ = w.set_title("Mellow");
                                     show_and_focus(&w);
                                 }
                             }
@@ -336,7 +399,7 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(w) = app.get_webview_window("main") {
                             if w.is_visible().unwrap_or(true) {
-                                let _ = w.hide();
+                                 let _ = w.hide();
                             } else {
                                 show_and_focus(&w);
                             }
@@ -356,24 +419,12 @@ pub fn run() {
                 }
             });
 
-            // If a server is saved and reachable, navigate straight to it
+            // If a server is saved and reachable, navigate straight to it.
+            // If unreachable, stay on the bundled launcher (index.html) which already handles reachability reporting.
             let settings = app.state::<AppState>().load();
             if let Some(last) = settings.last.clone() {
                 if tcp_reachable(&last, Duration::from_millis(900)) {
                     if let Ok(url) = last.parse::<tauri::Url>() {
-                        let _ = win.navigate(url);
-                    }
-                } else {
-                    // Stay on the launcher but tell it why
-                    let base = app
-                        .state::<AppState>()
-                        .launcher_url
-                        .lock()
-                        .ok()
-                        .and_then(|u| u.clone())
-                        .unwrap_or_else(|| "index.html".to_string());
-                    let base = base.split('?').next().unwrap_or(&base).to_string();
-                    if let Ok(url) = format!("{base}?error=unreachable").parse::<tauri::Url>() {
                         let _ = win.navigate(url);
                     }
                 }

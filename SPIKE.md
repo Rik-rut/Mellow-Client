@@ -8,6 +8,8 @@ Programmatic results are filled in as builds pass. Items marked [CLICK] need you
 - [x] `cargo check` clean, zero warnings
 - [x] NSIS installer builds: `src-tauri/target/release/bundle/nsis/Mellow_0.1.0_x64-setup.exe` (2.3 MB)
 - [x] App binary launches and stays alive (window title "Mellow", no startup panic; tray, settings and single-instance init all succeeded)
+- [x] Native icons regenerated from the REAL `mellow.svg` artwork (assets/mellow.svg → 1024px PNG via headless Chrome → `tauri icon`) — exe, title bar, taskbar, tray, Start menu, installer
+- [x] "change server" rail button now injected via native `initialization_script` + `mellow-desktop://` navigation intercept — independent of remote-origin IPC (custom commands are ACL-blocked on remote pages in Tauri v2.11; verified in source)
 - [ ] LAN discovery requires the server repo changes + a **server restart** to go live (the currently-running server predates them)
 
 ## [CLICK] — run `npm run dev` (or install the exe), then:
