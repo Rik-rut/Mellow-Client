@@ -1,8 +1,9 @@
 (function () {
   'use strict';
   // Runs natively on every top-level page. Only act on server pages (http/https);
-  // the bundled launcher (tauri:// / localhost origins) already has its own UI.
+  // never run on the bundled launcher (tauri.localhost / tauri:// origins).
   if (!/^https?:$/.test(location.protocol)) return;
+  if (location.hostname === 'tauri.localhost' || location.host.indexOf('tauri.localhost') !== -1) return;
 
   var CSS = [
     '#mellow-desktop-back-btn {',
@@ -64,11 +65,11 @@
       var oldRailBtn = document.getElementById('rail-change-server');
       if (oldRailBtn) oldRailBtn.remove();
 
-      if (document.getElementById('mellow-desktop-back-btn')) return;
-
+      // Only inject on the login page (#auth-screen)
       var authScreen = document.getElementById('auth-screen');
-      var container = authScreen || document.body;
-      if (!container) return;
+      if (!authScreen) return;
+
+      if (document.getElementById('mellow-desktop-back-btn')) return;
 
       ensureStyles();
 
@@ -89,11 +90,7 @@
         window.location.href = 'mellow-desktop://switch-server';
       });
 
-      if (!authScreen) {
-        btn.style.position = 'fixed';
-      }
-
-      container.appendChild(btn);
+      authScreen.appendChild(btn);
     } catch (e) {}
   }
 
