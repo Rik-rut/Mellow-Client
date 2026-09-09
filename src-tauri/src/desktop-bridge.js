@@ -6,7 +6,7 @@
   if (location.hostname === 'tauri.localhost' || location.host.indexOf('tauri.localhost') !== -1) return;
 
   var CSS = [
-    '#mellow-desktop-back-btn {',
+    '#mellow-desktop-back-btn, #mellow-desktop-offline-btn {',
     '  position: absolute;',
     '  top: 20px;',
     '  left: 20px;',
@@ -30,24 +30,31 @@
     '  user-select: none;',
     '  text-decoration: none;',
     '}',
-    '#mellow-desktop-back-btn:hover {',
+    '#mellow-desktop-back-btn:hover, #mellow-desktop-offline-btn:hover {',
     '  background: rgba(43, 53, 61, 0.95);',
     '  border-color: rgba(60, 213, 185, 0.45);',
     '  color: #3cd5b9;',
     '  transform: translateY(-1px);',
     '  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);',
     '}',
-    '#mellow-desktop-back-btn:active {',
+    '#mellow-desktop-back-btn:active, #mellow-desktop-offline-btn:active {',
     '  transform: translateY(0) scale(0.97);',
     '}',
-    '#mellow-desktop-back-btn svg {',
+    '#mellow-desktop-back-btn svg, #mellow-desktop-offline-btn svg {',
     '  width: 16px;',
     '  height: 16px;',
     '  flex-shrink: 0;',
     '  transition: transform 0.18s ease;',
     '}',
-    '#mellow-desktop-back-btn:hover svg {',
+    '#mellow-desktop-back-btn:hover svg, #mellow-desktop-offline-btn:hover svg {',
     '  transform: translateX(-2px);',
+    '}',
+    '#mellow-desktop-offline-btn {',
+    '  position: fixed;',
+    '  top: 20px;',
+    '  left: auto;',
+    '  right: 20px;',
+    '  z-index: 2147483000;',
     '}'
   ].join('\n');
 
@@ -59,38 +66,71 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  var ARROW_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<line x1="19" y1="12" x2="5" y2="12"></line>' +
+    '<polyline points="12 19 5 12 12 5"></polyline>' +
+    '</svg>';
+
+  function goToServerMenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.location.href = 'mellow-desktop://switch-server';
+  }
+
+  function syncLoginBtn() {
+    var authScreen = document.getElementById('auth-screen');
+    if (!authScreen) return;
+    if (document.getElementById('mellow-desktop-back-btn')) return;
+    ensureStyles();
+    var btn = document.createElement('button');
+    btn.id = 'mellow-desktop-back-btn';
+    btn.type = 'button';
+    btn.title = 'Back to server list';
+    btn.innerHTML = ARROW_SVG + '<span>Change server</span>';
+    btn.addEventListener('click', goToServerMenu);
+    authScreen.appendChild(btn);
+  }
+
+  // Frontend-agnostic: the web app shows a full-screen offline card when the
+  // server is unreachable ("Disconnected / Attempting to reconnect to server..."
+  // in local-chat). innerText only includes visible text, so a hidden overlay
+  // never causes a false positive, and it doesn't matter how the markup is nested.
+  var OFFLINE_RE = /(server is disconnected|you.?re (offline|disconnected)|attempting to reconnect|reconnect(ing)? to (the )?server|connection (lost|failed)|press .{0,4}r.{0,4} to retry)/i;
+
+  function offlineScreenVisible() {
+    if (!document.body) return false;
+    // Login screen has its own "Change server" pill; never stack both.
+    var auth = document.getElementById('auth-screen');
+    if (auth && (auth.offsetWidth > 0 || auth.offsetHeight > 0)) return false;
+    return OFFLINE_RE.test(document.body.innerText || '');
+  }
+
+  function syncOfflineBtn() {
+    var existing = document.getElementById('mellow-desktop-offline-btn');
+    if (offlineScreenVisible()) {
+      if (existing || !document.body) return;
+      ensureStyles();
+      var btn = document.createElement('button');
+      btn.id = 'mellow-desktop-offline-btn';
+      btn.type = 'button';
+      btn.title = 'Back to server list';
+      btn.innerHTML = ARROW_SVG + '<span>Change server</span>';
+      btn.addEventListener('click', goToServerMenu);
+      document.body.appendChild(btn);
+    } else if (existing) {
+      existing.remove();
+    }
+  }
+
   function inject() {
     try {
       // Ensure any old rail-change-server button is completely removed
       var oldRailBtn = document.getElementById('rail-change-server');
       if (oldRailBtn) oldRailBtn.remove();
 
-      // Only inject on the login page (#auth-screen)
-      var authScreen = document.getElementById('auth-screen');
-      if (!authScreen) return;
-
-      if (document.getElementById('mellow-desktop-back-btn')) return;
-
-      ensureStyles();
-
-      var btn = document.createElement('button');
-      btn.id = 'mellow-desktop-back-btn';
-      btn.type = 'button';
-      btn.title = 'Back to server list';
-      btn.innerHTML =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
-        '<line x1="19" y1="12" x2="5" y2="12"></line>' +
-        '<polyline points="12 19 5 12 12 5"></polyline>' +
-        '</svg>' +
-        '<span>Change server</span>';
-
-      btn.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.location.href = 'mellow-desktop://switch-server';
-      });
-
-      authScreen.appendChild(btn);
+      syncLoginBtn();
+      syncOfflineBtn();
     } catch (e) {}
   }
 
