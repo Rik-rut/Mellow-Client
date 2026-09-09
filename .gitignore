@@ -6,4 +6,4 @@ build-assets/
 *.log
 *.pid
 screenshots/*
-docs/*
+docs/
