@@ -1,7 +1,13 @@
 # Mellow Desktop Client
 
 Tauri v2 desktop client for self-hosted [Mellow](../local-chat) LAN chat servers.
-Windows-first (WebView2); the same core is designed to extend to macOS/Linux later.
+Installers are built for Windows (NSIS), macOS (universal `.dmg`, unsigned) and
+Linux (`.deb` + `.AppImage`) by GitHub Actions on every `v*` tag.
+
+On macOS/Linux the client transparently reverse-proxies the server to
+`http://127.0.0.1:<port>` (stable per server URL) so voice calls work in WebKit
+without trusting the self-signed cert; on Windows the original direct-https path
+is unchanged (`MELLOW_PROXY=1` forces the proxy on Windows for testing).
 
 ## What it is
 
@@ -36,6 +42,21 @@ npm run build    # emits src-tauri/target/release/bundle/nsis/Mellow_x64-setup.e
 ```
 
 Requires: Rust (rustc/cargo), WebView2 runtime (preinstalled on Win 10/11), VS Build Tools.
+
+## Installing prebuilt installers (from GitHub Releases)
+
+All installers are **unsigned** (no paid Apple/Windows dev certs). First launch needs
+one manual bypass per OS:
+
+- **Windows** — run `Mellow_x64-setup.exe` normally (may show SmartScreen → *More info* → *Run anyway*).
+- **macOS** — download `Mellow_*_universal.dmg`, open it, drag Mellow to Applications, then
+  **right-click → Open** once (Gatekeeper). If still blocked: `xattr -cr /Applications/Mellow.app`.
+- **Linux** — `sudo dpkg -i Mellow_*_amd64.deb` (then `sudo apt -f install` if deps are pulled),
+  or `chmod +x Mellow_*.AppImage && ./Mellow_*.AppImage`. AppImage tray icon needs the
+  GNOME *AppIndicator* extension; the app still runs windowed without it.
+
+Browser users keep using the `https://` server URL directly — nothing here is required for that.
+
 
 ## Repo map
 

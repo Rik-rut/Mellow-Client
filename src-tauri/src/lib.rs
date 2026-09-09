@@ -1,4 +1,6 @@
-use std::collections::HashSet;
+pub mod proxy;
+
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::PathBuf;
@@ -13,6 +15,18 @@ use tauri::{
     Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_notification::NotificationExt;
+
+mod local_env {
+    /// Proxy the webview origin through http://127.0.0.1 on mac/linux
+    /// (WKWebView cannot bypass a self-signed cert); MELLOW_PROXY=1 forces it
+    /// on Windows too, to test the exact mac/linux code path locally.
+    pub fn use_proxy() -> bool {
+        if !cfg!(target_os = "windows") {
+            return true;
+        }
+        matches!(std::env::var("MELLOW_PROXY").as_deref(), Ok("1"))
+    }
+}
 
 const DEFAULT_PORT: u16 = 6767;
 const DISCOVERY_PORT: u16 = 6768;
@@ -32,6 +46,38 @@ struct AppState {
     settings_path: PathBuf,
     launcher_url: Mutex<Option<String>>,
     tray: Mutex<Option<tauri::tray::TrayIcon>>,
+    /// One local reverse proxy per distinct server url: server url -> local port.
+    proxies: Mutex<HashMap<String, u16>>,
+}
+
+impl AppState {
+    /// Navigate target for a server url: on mac/linux (or with MELLOW_PROXY=1)
+    /// a per-server local reverse proxy serves the real https server over
+    /// http://127.0.0.1:<stable port> so WebKit sees a secure context.
+    fn proxied_url(&self, target: &str) -> Result<String, String> {
+        if !local_env::use_proxy() {
+            return Ok(target.to_string());
+        }
+        {
+            let map = self.proxies.lock().map_err(|_| "state lock".to_string())?;
+            if let Some(port) = map.get(target) {
+                return Ok(format!("http://127.0.0.1:{port}"));
+            }
+        }
+        let port = tauri::async_runtime::block_on(proxy::start_proxy(target))?;
+        self.proxies
+            .lock()
+            .map_err(|_| "state lock".to_string())?
+            .insert(target.to_string(), port);
+        Ok(format!("http://127.0.0.1:{port}"))
+    }
+
+    fn is_proxy_port(&self, port: u16) -> bool {
+        self.proxies
+            .lock()
+            .map(|m| m.values().any(|p| *p == port))
+            .unwrap_or(false)
+    }
 }
 
 impl AppState {
@@ -64,7 +110,11 @@ fn open_external_url(url: &str) {
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
@@ -182,7 +232,8 @@ fn connect(app: tauri::AppHandle, state: State<'_, AppState>, url: String) -> Re
     state.save(&s);
 
     let win = app.get_webview_window("main").ok_or("no main window")?;
-    win.navigate(url.parse::<tauri::Url>().map_err(|e| e.to_string())?)
+    let nav_url = state.proxied_url(&url)?;
+    win.navigate(nav_url.parse::<tauri::Url>().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let _ = win.set_title("Mellow");
     let _ = win.show();
@@ -317,6 +368,7 @@ pub fn run() {
                 settings_path: config_dir.join("settings.json"),
                 launcher_url: Mutex::new(None),
                 tray: Mutex::new(None),
+                proxies: Mutex::new(HashMap::new()),
             });
 
             // Single window, created here so we can attach the native bridge:
@@ -325,23 +377,28 @@ pub fn run() {
             //   ACL-blocked on remote origins);
             // - on_navigation catches mellow-desktop:// from that button.
             let nav_handle = handle.clone();
-            let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Mellow")
                 .inner_size(1180.0, 760.0)
                 .min_inner_size(880.0, 580.0)
                 .center()
                 .resizable(true)
-                .disable_drag_drop_handler()
-                .additional_browser_args(
-                    "--ignore-certificate-errors \
-                     --autoplay-policy=no-user-gesture-required \
-                     --enable-gpu-rasterization \
-                     --enable-zero-copy \
-                     --ignore-gpu-blocklist \
-                     --enable-accelerated-video-decode \
-                     --enable-accelerated-video-encode \
-                     --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling"
-                )
+                .disable_drag_drop_handler();
+
+            // WebView2-only flags: the method is ignored on mac/linux (tauri docs).
+            #[cfg(target_os = "windows")]
+            let builder = builder.additional_browser_args(
+                "--ignore-certificate-errors \
+                 --autoplay-policy=no-user-gesture-required \
+                 --enable-gpu-rasterization \
+                 --enable-zero-copy \
+                 --ignore-gpu-blocklist \
+                 --enable-accelerated-video-decode \
+                 --enable-accelerated-video-encode \
+                 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
+            );
+
+            let win = builder
                 .initialization_script(include_str!("desktop-bridge.js"))
                 .on_navigation(move |url| {
                     if url.scheme() == "mellow-desktop" {
@@ -385,7 +442,11 @@ pub fn run() {
                                 false
                             }
                         });
-                        if !is_launcher && !is_server {
+                        // A proxied server origin (http://127.0.0.1:<port>) is the
+                        // server on mac/linux — must not be shunted to the browser.
+                        let is_proxied_server = matches!(url.host_str(), Some("127.0.0.1"))
+                            && url.port().map(|p| nav_handle.state::<AppState>().is_proxy_port(p)).unwrap_or(false);
+                        if !is_launcher && !is_server && !is_proxied_server {
                             open_external_url(url.as_str());
                             return false;
                         }
@@ -478,7 +539,14 @@ pub fn run() {
             let settings = app.state::<AppState>().load();
             if let Some(last) = settings.last.clone() {
                 if tcp_reachable(&last, Duration::from_millis(900)) {
-                    if let Ok(url) = last.parse::<tauri::Url>() {
+                    let nav = app
+                        .state::<AppState>()
+                        .proxied_url(&last)
+                        .unwrap_or_else(|e| {
+                            eprintln!("[mellow] proxy start failed, navigating direct: {e}");
+                            last.clone()
+                        });
+                    if let Ok(url) = nav.parse::<tauri::Url>() {
                         let _ = win.navigate(url);
                     }
                 }
