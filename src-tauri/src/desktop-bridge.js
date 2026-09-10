@@ -8,8 +8,8 @@
   var CSS = [
     '#mellow-desktop-back-btn, #mellow-desktop-offline-btn {',
     '  position: absolute;',
-    '  top: 20px;',
-    '  left: 20px;',
+    '  top: max(20px, env(safe-area-inset-top, 20px));',
+    '  left: max(20px, env(safe-area-inset-left, 20px));',
     '  z-index: 99999;',
     '  display: inline-flex;',
     '  align-items: center;',
@@ -51,9 +51,9 @@
     '}',
     '#mellow-desktop-offline-btn {',
     '  position: fixed;',
-    '  top: 20px;',
+    '  top: max(20px, env(safe-area-inset-top, 20px));',
     '  left: auto;',
-    '  right: 20px;',
+    '  right: max(20px, env(safe-area-inset-right, 20px));',
     '  z-index: 2147483000;',
     '}'
   ].join('\n');
