@@ -105,17 +105,18 @@ npx tauri android dev
 npx tauri android build --apk
 
 # Output APK location:
-# src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+# Mellow-universal-release.apk (copied automatically to repo root)
+# Also in: src-tauri/gen/android/app/build/outputs/apk/universal/release/Mellow-universal-release.apk
 ```
 
 ### Sideloading & Installation Notes
 
 1. **Install via ADB**:
    ```bash
-   adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+   adb install -r Mellow-universal-release.apk
    ```
 2. **Install via Device Storage (Files app)**:
-   - Transfer `app-universal-release.apk` to your phone (via USB, NAS, or local share).
+   - Transfer `Mellow-universal-release.apk` to your phone (via USB, NAS, or local share).
    - Open your file manager, tap the APK, and allow "Install unknown apps" when prompted.
 3. **OEM Battery Optimization**:
    - On first connect, Mellow will request exemption from battery optimizations. Tap **Allow** so Android doesn't throttle background LAN connectivity.

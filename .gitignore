@@ -11,3 +11,5 @@ graphify-out/
 *.keystore
 *.jks
 keystore.properties
+*.apk
+dist/

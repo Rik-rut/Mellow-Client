@@ -68,12 +68,40 @@ android {
             )
         }
     }
+    applicationVariants.all {
+        outputs.all {
+            val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            if (output != null && buildType.name == "release") {
+                output.outputFileName = "Mellow-universal-release.apk"
+            }
+        }
+    }
     kotlinOptions {
         jvmTarget = "1.8"
     }
     buildFeatures {
         buildConfig = true
     }
+}
+
+tasks.register("copyReleaseApk") {
+    doNotTrackState("Avoid indexing entire repository workspace")
+    doLast {
+        val srcDir = layout.buildDirectory.dir("outputs/apk/universal/release").get().asFile
+        val destDir = rootProject.rootDir.parentFile.parentFile.parentFile
+        val apk = File(srcDir, "Mellow-universal-release.apk")
+        if (apk.exists()) {
+            val target = File(destDir, "Mellow-universal-release.apk")
+            apk.copyTo(target, overwrite = true)
+            val defaultApk = File(srcDir, "app-universal-release.apk")
+            apk.copyTo(defaultApk, overwrite = true)
+            logger.lifecycle("Copied release APK to: ${target.absolutePath}")
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleUniversalRelease" }.configureEach {
+    finalizedBy("copyReleaseApk")
 }
 
 rust {
