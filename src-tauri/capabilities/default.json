@@ -8,7 +8,12 @@
     "notification:default"
   ],
   "remote": {
-    "urls": ["http://*:*/*", "https://*:*/*"]
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*",
+      "http://*:*/*",
+      "https://*:*/*"
+    ]
   },
   "local": true
 }
