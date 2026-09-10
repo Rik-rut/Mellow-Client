@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 28+ blocks cleartext by default. The local reverse proxy is the only
+     http origin the app talks to (the real server stays https:// over the
+     proxy hop), so cleartext is permitted for loopback + the tauri virtual
+     host only — never for LAN/Internet hosts. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">tauri.localhost</domain>
+    </domain-config>
+</network-security-config>
