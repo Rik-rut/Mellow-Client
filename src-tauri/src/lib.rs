@@ -9,11 +9,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+#[cfg(desktop)]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
+use tauri::{Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_notification::NotificationExt;
 
 mod local_env {
@@ -45,6 +46,7 @@ struct Settings {
 struct AppState {
     settings_path: PathBuf,
     launcher_url: Mutex<Option<String>>,
+    #[cfg(desktop)]
     tray: Mutex<Option<tauri::tray::TrayIcon>>,
     /// One local reverse proxy per distinct server url: server url -> local port.
     proxies: Mutex<HashMap<String, u16>>,
@@ -100,9 +102,10 @@ impl AppState {
 
 /* ────────────────────────────── external urls ───────────────────────── */
 
-fn open_external_url(url: &str) {
+fn open_external_url(app: &tauri::AppHandle, url: &str) {
     #[cfg(target_os = "windows")]
     {
+        let _ = app;
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let _ = std::process::Command::new("rundll32.exe")
@@ -112,11 +115,68 @@ fn open_external_url(url: &str) {
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = app;
         let _ = std::process::Command::new("open").arg(url).spawn();
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "android")]
     {
+        // No xdg-open on Android: the opener plugin posts an ACTION_VIEW intent
+        // through the wry activity — zero hand-written JNI.
+        use tauri_plugin_opener::OpenerExt;
+        let _ = app.opener().open_url(url, None::<String>);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, url);
+    }
+}
+
+/* ─────────────────── android foreground-service bridge ───────────────── */
+
+/// Rust owns the keep-alive (FGS) lifecycle: it dispatches static-method calls
+/// into `MellowBridge` on the Kotlin side via wry's main-thread JNI pipe —
+/// no JS-invocable commands, so remote-origin ACL is irrelevant (plan §2.3).
+#[cfg(target_os = "android")]
+mod keepalive {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use wry::prelude::{dispatch, find_class};
+
+    const BRIDGE_CLASS: &str = "dev/mellow/client/MellowBridge";
+    static CONNECTED: AtomicBool = AtomicBool::new(false);
+
+    pub fn set_connected(connected: bool) {
+        // Only cross the JNI boundary on real transitions — the launcher
+        // navigation at startup must not poke a service that never started.
+        if CONNECTED.swap(connected, Ordering::SeqCst) == connected {
+            return;
+        }
+        dispatch(move |env, activity, _webview| {
+            let Ok(cls) = find_class(env, activity, BRIDGE_CLASS.into()) else {
+                eprintln!("[mellow] MellowBridge class not found");
+                return;
+            };
+            let arg = if connected { 1 } else { 0 };
+            let _ = env.call_static_method(&cls, "setConnected", "(I)V", &[arg.into()]);
+        });
+    }
+
+    pub fn set_badge(count: &str) {
+        if !CONNECTED.load(Ordering::SeqCst) {
+            return;
+        }
+        let count = count.to_string();
+        dispatch(move |env, activity, _webview| {
+            let Ok(cls) = find_class(env, activity, BRIDGE_CLASS.into()) else {
+                return;
+            };
+            let Ok(s) = env.new_string(&count) else { return };
+            let _ = env.call_static_method(&cls, "setBadge", "(Ljava/lang/String;)V", &[(&s).into()]);
+        });
     }
 }
 
@@ -242,13 +302,19 @@ fn connect(app: tauri::AppHandle, state: State<'_, AppState>, url: String) -> Re
 }
 
 #[tauri::command]
-fn forget_server(state: State<'_, AppState>, url: String) {
+#[allow(unused_variables)]
+fn forget_server(app: tauri::AppHandle, state: State<'_, AppState>, url: String) {
     let mut s = state.load();
+    let was_last = s.last.as_deref() == Some(url.as_str());
     s.servers.retain(|x| x != &url);
-    if s.last.as_deref() == Some(url.as_str()) {
+    if was_last {
         s.last = None;
     }
     state.save(&s);
+    #[cfg(target_os = "android")]
+    if was_last {
+        keepalive::set_connected(false);
+    }
 }
 
 #[tauri::command]
@@ -332,129 +398,245 @@ fn desktop_notify(app: tauri::AppHandle, title: String, body: String) {
 }
 
 #[tauri::command]
+#[allow(unused_variables)]
 fn set_unread(app: tauri::AppHandle, state: State<'_, AppState>, count: String) {
-    if let Ok(tray) = state.tray.lock() {
-        if let Some(t) = tray.as_ref() {
-            let _ = t.set_tooltip(Some(if count.is_empty() {
-                "Mellow".into()
-            } else {
-                format!("({count}) Mellow")
-            }));
+    #[cfg(desktop)]
+    {
+        if let Ok(tray) = state.tray.lock() {
+            if let Some(t) = tray.as_ref() {
+                let _ = t.set_tooltip(Some(if count.is_empty() {
+                    "Mellow".into()
+                } else {
+                    format!("({count}) Mellow")
+                }));
+            }
         }
     }
-    let _ = app;
+    // Android: the same "N+ Mellow" title count drives the ongoing
+    // foreground-service notification body via the Kotlin bridge.
+    #[cfg(target_os = "android")]
+    keepalive::set_badge(&count);
 }
 
 /* ─────────────────────────────── boot ───────────────────────────────── */
 
+#[cfg(desktop)]
 fn show_and_focus(win: &WebviewWindow) {
     let _ = win.show();
+    #[cfg(desktop)]
     let _ = win.unminimize();
     let _ = win.set_focus();
 }
 
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(win) = app.get_webview_window("main") {
-                show_and_focus(&win);
+/// Single window, created here so we can attach the native bridge:
+/// - initialization_script injects the "change server" rail button on
+///   server pages without needing remote IPC (custom commands are
+///   ACL-blocked on remote origins);
+/// - on_navigation catches mellow-desktop:// from that button.
+fn build_main_window(
+    app: &mut tauri::App,
+) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let nav_handle = app.handle().clone();
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("Mellow")
+        .inner_size(1180.0, 760.0)
+        .min_inner_size(880.0, 580.0)
+        .resizable(true)
+        .disable_drag_drop_handler();
+
+    #[cfg(desktop)]
+    let builder = builder.center();
+
+    // WebView2-only flags: the method is ignored on mac/linux (tauri docs).
+    #[cfg(target_os = "windows")]
+    let builder = builder.additional_browser_args(
+        "--ignore-certificate-errors \
+         --autoplay-policy=no-user-gesture-required \
+         --enable-gpu-rasterization \
+         --enable-zero-copy \
+         --ignore-gpu-blocklist \
+         --enable-accelerated-video-decode \
+         --enable-accelerated-video-encode \
+         --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
+    );
+
+    let win = builder
+        .initialization_script(include_str!("desktop-bridge.js"))
+        .on_navigation(move |url| {
+            if url.scheme() == "mellow-desktop" {
+                if url.host_str() == Some("open-url") {
+                    if let Some((_, target)) = url.query_pairs().find(|(k, _)| k == "url") {
+                        open_external_url(&nav_handle, &target);
+                    }
+                    return false;
+                }
+                if url.host_str() == Some("switch-server") || url.path() == "/switch-server" {
+                    let h = nav_handle.clone();
+                    let hc = h.clone();
+                    let _ = h.run_on_main_thread(move || {
+                        let Some(w) = hc.get_webview_window("main") else { return };
+                        let base = hc
+                            .state::<AppState>()
+                            .launcher_url
+                            .lock()
+                            .ok()
+                            .and_then(|u| u.clone())
+                            .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
+                        let base = base.split('?').next().unwrap_or(&base).to_string();
+                        if let Ok(u) = base.parse::<tauri::Url>() {
+                            let _ = w.navigate(u);
+                            let _ = w.set_title("Mellow");
+                        }
+                    });
+                    return false;
+                }
+                return false;
             }
-        }))
-        .plugin(tauri_plugin_notification::init())
+            if url.scheme() == "http" || url.scheme() == "https" {
+                let is_launcher = url.host_str() == Some("tauri.localhost")
+                    || url.host_str() == Some("localhost")
+                    || url.scheme() == "tauri";
+                let settings = nav_handle.state::<AppState>().load();
+                let is_server = settings.servers.iter().chain(settings.last.iter()).any(|s| {
+                    if let Ok(su) = s.parse::<tauri::Url>() {
+                        su.host_str() == url.host_str() && su.port() == url.port()
+                    } else {
+                        false
+                    }
+                });
+                // A proxied server origin (http://127.0.0.1:<port>) is the
+                // server on mac/linux — must not be shunted to the browser.
+                let is_proxied_server = matches!(url.host_str(), Some("127.0.0.1"))
+                    && url.port().map(|p| nav_handle.state::<AppState>().is_proxy_port(p)).unwrap_or(false);
+                // Android: the keep-alive foreground service mirrors the
+                // connected state — on while a server page is loaded, off
+                // back at the launcher (plan §2.3, lifecycle owned by Rust).
+                #[cfg(target_os = "android")]
+                {
+                    if is_launcher {
+                        keepalive::set_connected(false);
+                    } else if is_server || is_proxied_server {
+                        keepalive::set_connected(true);
+                    }
+                }
+                if !is_launcher && !is_server && !is_proxied_server {
+                    open_external_url(&nav_handle, url.as_str());
+                    return false;
+                }
+            }
+            true
+        })
+        .build()?;
+    Ok(win)
+}
+
+/// Desktop-only chrome: tray icon with menu + close-button hides to tray.
+#[cfg(desktop)]
+fn setup_desktop(app: &tauri::App, win: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
+    let show_i = MenuItem::with_id(app, "show", "Open Mellow", true, None::<&str>)?;
+    let switch_i = MenuItem::with_id(app, "switch", "Switch server", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_i, &switch_i, &quit_i])?;
+    let tray = TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("Mellow")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    show_and_focus(&w);
+                }
+            }
+            "switch" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let url_str = state
+                        .launcher_url
+                        .lock()
+                        .ok()
+                        .and_then(|u| u.clone())
+                        .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
+                    if let Some(w) = app.get_webview_window("main") {
+                        if let Ok(u) = url_str.parse::<tauri::Url>() {
+                            let _ = w.navigate(u);
+                            let _ = w.set_title("Mellow");
+                            show_and_focus(&w);
+                        }
+                    }
+                }
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(w) = app.get_webview_window("main") {
+                    if w.is_visible().unwrap_or(true) {
+                         let _ = w.hide();
+                    } else {
+                        show_and_focus(&w);
+                    }
+                }
+            }
+        })
+        .build(app)?;
+    *app.state::<AppState>().tray.lock().unwrap() = Some(tray);
+
+    // Close button hides to tray
+    let win_clone = win.clone();
+    win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = win_clone.hide();
+        }
+    });
+    Ok(())
+}
+
+/// Android: permissions (POST_NOTIFICATIONS), the back-button minimize and the
+/// keep-alive service itself live in the Kotlin project (gen/android); the
+/// service start/stop is dispatched from on_navigation / forget_server above.
+/// This hook exists so the platform split has one obvious entry point.
+#[cfg(target_os = "android")]
+fn setup_android(_app: &tauri::App, _win: &WebviewWindow) {}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(win) = app.get_webview_window("main") {
+            show_and_focus(&win);
+        }
+    }));
+
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_opener::init());
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir().expect("config dir");
             app.manage(AppState {
                 settings_path: config_dir.join("settings.json"),
                 launcher_url: Mutex::new(None),
+                #[cfg(desktop)]
                 tray: Mutex::new(None),
                 proxies: Mutex::new(HashMap::new()),
             });
 
-            // Single window, created here so we can attach the native bridge:
-            // - initialization_script injects the "change server" rail button on
-            //   server pages without needing remote IPC (custom commands are
-            //   ACL-blocked on remote origins);
-            // - on_navigation catches mellow-desktop:// from that button.
-            let nav_handle = handle.clone();
-            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Mellow")
-                .inner_size(1180.0, 760.0)
-                .min_inner_size(880.0, 580.0)
-                .center()
-                .resizable(true)
-                .disable_drag_drop_handler();
+            let win = build_main_window(app)?;
 
-            // WebView2-only flags: the method is ignored on mac/linux (tauri docs).
-            #[cfg(target_os = "windows")]
-            let builder = builder.additional_browser_args(
-                "--ignore-certificate-errors \
-                 --autoplay-policy=no-user-gesture-required \
-                 --enable-gpu-rasterization \
-                 --enable-zero-copy \
-                 --ignore-gpu-blocklist \
-                 --enable-accelerated-video-decode \
-                 --enable-accelerated-video-encode \
-                 --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
-            );
-
-            let win = builder
-                .initialization_script(include_str!("desktop-bridge.js"))
-                .on_navigation(move |url| {
-                    if url.scheme() == "mellow-desktop" {
-                        if url.host_str() == Some("open-url") {
-                            if let Some((_, target)) = url.query_pairs().find(|(k, _)| k == "url") {
-                                open_external_url(&target);
-                            }
-                            return false;
-                        }
-                        if url.host_str() == Some("switch-server") || url.path() == "/switch-server" {
-                            let h = nav_handle.clone();
-                            let hc = h.clone();
-                            let _ = h.run_on_main_thread(move || {
-                                let Some(w) = hc.get_webview_window("main") else { return };
-                                let base = hc
-                                    .state::<AppState>()
-                                    .launcher_url
-                                    .lock()
-                                    .ok()
-                                    .and_then(|u| u.clone())
-                                    .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
-                                let base = base.split('?').next().unwrap_or(&base).to_string();
-                                if let Ok(u) = base.parse::<tauri::Url>() {
-                                    let _ = w.navigate(u);
-                                    let _ = w.set_title("Mellow");
-                                }
-                            });
-                            return false;
-                        }
-                        return false;
-                    }
-                    if url.scheme() == "http" || url.scheme() == "https" {
-                        let is_launcher = url.host_str() == Some("tauri.localhost")
-                            || url.host_str() == Some("localhost")
-                            || url.scheme() == "tauri";
-                        let settings = nav_handle.state::<AppState>().load();
-                        let is_server = settings.servers.iter().chain(settings.last.iter()).any(|s| {
-                            if let Ok(su) = s.parse::<tauri::Url>() {
-                                su.host_str() == url.host_str() && su.port() == url.port()
-                            } else {
-                                false
-                            }
-                        });
-                        // A proxied server origin (http://127.0.0.1:<port>) is the
-                        // server on mac/linux — must not be shunted to the browser.
-                        let is_proxied_server = matches!(url.host_str(), Some("127.0.0.1"))
-                            && url.port().map(|p| nav_handle.state::<AppState>().is_proxy_port(p)).unwrap_or(false);
-                        if !is_launcher && !is_server && !is_proxied_server {
-                            open_external_url(url.as_str());
-                            return false;
-                        }
-                    }
-                    true
-                })
-                .build()?;
-
+            #[cfg(desktop)]
             if let Some(icon) = app.default_window_icon() {
                 let _ = win.set_icon(icon.clone());
             }
@@ -466,73 +648,10 @@ pub fn run() {
                 }
             }
 
-            // Tray with menu
-            let show_i = MenuItem::with_id(app, "show", "Open Mellow", true, None::<&str>)?;
-            let switch_i = MenuItem::with_id(app, "switch", "Switch server", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &switch_i, &quit_i])?;
-            let tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Mellow")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            show_and_focus(&w);
-                        }
-                    }
-                    "switch" => {
-                        if let Some(state) = app.try_state::<AppState>() {
-                            let url_str = state
-                                .launcher_url
-                                .lock()
-                                .ok()
-                                .and_then(|u| u.clone())
-                                .unwrap_or_else(|| "http://tauri.localhost/index.html".to_string());
-                            if let Some(w) = app.get_webview_window("main") {
-                                if let Ok(u) = url_str.parse::<tauri::Url>() {
-                                    let _ = w.navigate(u);
-                                    let _ = w.set_title("Mellow");
-                                    show_and_focus(&w);
-                                }
-                            }
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Left,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(true) {
-                                 let _ = w.hide();
-                            } else {
-                                show_and_focus(&w);
-                            }
-                        }
-                    }
-                })
-                .build(app)?;
-            *app.state::<AppState>().tray.lock().unwrap() = Some(tray);
-
-            // Close button hides to tray
-            let win = app.get_webview_window("main").expect("main window");
-            let win_clone = win.clone();
-            win.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = win_clone.hide();
-                }
-            });
+            #[cfg(desktop)]
+            setup_desktop(app, &win)?;
+            #[cfg(target_os = "android")]
+            setup_android(app, &win);
 
             // If a server is saved and reachable, navigate straight to it.
             // If unreachable, stay on the bundled launcher (index.html) which already handles reachability reporting.
@@ -553,8 +672,9 @@ pub fn run() {
             }
 
             // Sync unread count (encoded in document.title by the web app)
-            // into the tray tooltip. Works purely via injected JS; harmless
-            // if __TAURI__ is unavailable on the remote origin.
+            // into the tray tooltip (desktop) / ongoing notification badge
+            // (android). Works purely via injected JS; harmless if __TAURI__
+            // is unavailable on the remote origin.
             let timer_handle = handle.clone();
             thread::spawn(move || {
                 let js = "if (window.__TAURI__ && window.__TAURI__.core) { \

@@ -8,3 +8,6 @@ build-assets/
 screenshots/*
 docs/
 graphify-out/
+*.keystore
+*.jks
+keystore.properties
