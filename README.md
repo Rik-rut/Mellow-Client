@@ -57,6 +57,73 @@ one manual bypass per OS:
 
 Browser users keep using the `https://` server URL directly — nothing here is required for that.
 
+## Android Client
+
+Mellow runs natively on Android via Tauri v2 Mobile with full feature parity:
+- **LAN Chat & Voice Calls**: Full WebRTC voice calls and camera support over LAN.
+- **Localhost Reverse Proxy**: Transparently tunnels the self-signed HTTPS server through `http://127.0.0.1:<port>` over loopback, ensuring Chromium/Android System WebView treats the origin as a secure context.
+- **Keep-Alive Foreground Service (FGS)**: Runs a background keep-alive service (`MellowKeepAliveService`, type `remoteMessaging`) holding a persistent notification ("Mellow — connected") and a partial wake lock while connected. This prevents Android 12+ from freezing the process or suspending WebSocket networking when the screen is locked or idle in your pocket.
+- **Zero Server Changes / No Cloud Dependency**: Operates entirely offline on LAN with zero reliance on Google Play Services or Firebase Cloud Messaging (FCM).
+- **Navigation & Mobile UX**: System Back button minimizes the app without closing the background service. An injected "Change server" button cleanly disconnects, terminates the service, and returns to the saved server launcher.
+
+### Toolchain Matrix
+
+To build the Android client on Windows/Linux/macOS, install:
+- **Java**: JDK 21 (Temurin / OpenJDK 21) with `JAVA_HOME` configured
+- **Android SDK**: Platforms 34–36, `build-tools 35.0.0` or `36.0.0`
+- **Android NDK**: NDK r27 (`27.0.12077973`) with `NDK_HOME` configured
+- **Tauri Tooling**: `@tauri-apps/cli` 2.11.4 / Tauri 2.11.5 / wry 0.55.1
+- **Rust Android Targets**:
+  ```bash
+  rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+  ```
+
+### Build & Signing Commands
+
+#### 1. Setup Signing
+Generate a self-signed release keystore (one-time):
+```bash
+keytool -genkeypair -keystore src-tauri/gen/android/mellow-release.keystore -alias mellow -keyalg RSA -keysize 2048 -validity 10000
+```
+Create `src-tauri/gen/android/keystore.properties` (ignored by git, see `keystore.properties.example`):
+```properties
+storeFile=mellow-release.keystore
+storePassword=your_store_password
+keyAlias=mellow
+keyPassword=your_key_password
+```
+
+#### 2. Development & Emulators
+Run on a connected device or Android Studio emulator (e.g. API 34+ x86_64):
+```bash
+npx tauri android dev
+```
+
+#### 3. Build Signed Release APKs
+```bash
+# Build universal release APK (all ABIs)
+npx tauri android build --apk
+
+# Output APK location:
+# src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+### Sideloading & Installation Notes
+
+1. **Install via ADB**:
+   ```bash
+   adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+   ```
+2. **Install via Device Storage (Files app)**:
+   - Transfer `app-universal-release.apk` to your phone (via USB, NAS, or local share).
+   - Open your file manager, tap the APK, and allow "Install unknown apps" when prompted.
+3. **OEM Battery Optimization**:
+   - On first connect, Mellow will request exemption from battery optimizations. Tap **Allow** so Android doesn't throttle background LAN connectivity.
+   - For aggressive OEM task killers (Xiaomi MIUI/HyperOS, Samsung OneUI, OnePlus/Oppo ColorOS), ensure Mellow is set to "No restrictions" or "Unrestricted" under app battery settings.
+4. **WebView Compatibility**:
+   - WebRTC voice calls require Chromium / Android System WebView ≥ 89 (which supports loopback secure contexts). Any device with Google Play auto-updates enabled satisfies this.
+
+
 
 ## Repo map
 
