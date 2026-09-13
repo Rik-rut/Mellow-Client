@@ -71,6 +71,7 @@ You can install Mellow using either a package or an AppImage:
 2. On the **Connect** screen:
    - If your server is discovered automatically on your network, click its address in the list.
    - Otherwise, enter the server address manually (for example, `192.168.1.5` or `192.168.1.5:6767`).
+   - For Cloudflare Tunnels or custom domains, always add `:443` at the end (for example, `chat.yourdomain.com:443`). Without `:443`, the client automatically defaults to local port 6767.
 3. Click **Connect**.
 4. Log in with your Mellow username and password.
 
