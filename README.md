@@ -1,91 +1,132 @@
-# Mellow Desktop Client
+# Mellow Client
 
-Tauri v2 desktop client for self-hosted [Mellow](../local-chat) LAN chat servers.
-Installers are built for Windows (NSIS), macOS (universal `.dmg`, unsigned) and
-Linux (`.deb` + `.AppImage`) by GitHub Actions on every `v*` tag.
+Mellow Client is an app for your computer and phone that connects to your private [Mellow Server](https://github.com/Rik-rut/Mellow-Server). It lets you chat and make voice calls with other people on your local home or office network without relying on cloud services.
 
-On macOS/Linux the client transparently reverse-proxies the server to
-`http://127.0.0.1:<port>` (stable per server URL) so voice calls work in WebKit
-without trusting the self-signed cert; on Windows the original direct-https path
-is unchanged (`MELLOW_PROXY=1` forces the proxy on Windows for testing).
+## What is Mellow?
 
-## What it is
+Mellow is a private chat system designed to run on your own local network (LAN). Instead of sending your messages and calls through third-party servers on the internet, Mellow keeps everything inside your private network.
 
-A thin native shell that loads your Mellow server as a web app:
+To use Mellow, you need two parts:
+1. A running [Mellow Server](https://github.com/Rik-rut/Mellow-Server) hosted on a computer in your network.
+2. The Mellow Client app (this application) installed on your Windows, Mac, Linux, or Android device.
 
-1. First launch shows a **Connect screen** (styled like Mellow's login): enter the
-   server address (`192.168.1.5`, `192.168.1.5:6767`, or a full URL — default port 6767),
-   or pick one discovered automatically on your LAN.
-2. The window navigates in place to the server's normal **login page** — the web app
-   itself is untouched and same-origin (chat, voice, uploads, WebSocket all as in a browser).
-3. The server address is remembered (`%APPDATA%\dev.mellow.client\settings.json`, up to 5,
-   most recent first). If the saved server is offline, the Connect screen comes back.
+## Key Features
 
-## Desktop extras
+- Private Chat: Send messages and files directly through your local network.
+- Voice and Video Calls: Talk with other members with working microphone and camera support.
+- Automatic Discovery: Automatically finds Mellow servers running on your local network.
+- Remembers Your Servers: Saves your server address so you do not have to type it every time.
+- Desktop Notifications: Receive message alerts while the app is open or running in the system tray.
+- Stays Connected on Android: Keeps you connected in the background so you do not miss messages when your phone is locked.
 
-- **Tray**: closing the window hides it to the tray (left-click toggles, menu: Open / Switch server / Quit); tray tooltip shows unread count
-- **Native notifications** for DMs/mentions (respects the app's DND + notification settings); only while the desktop client is running
-- **Single instance**: launching again focuses the existing window
-- Self-signed server certs are accepted by the embedded WebView2 (LAN trust model)
+## How to Install
 
-## Develop
+Download the installer for your system from the Releases section of this repository.
+
+Because Mellow Client is self-published and does not use expensive commercial developer certificates, your operating system may show a standard safety prompt during the first install. Follow the simple steps below for your device.
+
+### Windows
+
+1. Download the installer named `Mellow_x64-setup.exe`.
+2. Double-click the file to begin installation.
+3. If Windows SmartScreen appears saying "Windows protected your PC":
+   - Click **More info**.
+   - Click **Run anyway**.
+4. Follow the setup wizard to finish installing. You can launch Mellow from your Start Menu or Desktop shortcut.
+
+### Mac (macOS)
+
+1. Download `Mellow_*_universal.dmg`.
+2. Double-click the `.dmg` file to open it, then drag the Mellow icon into your **Applications** folder.
+3. Open your Applications folder.
+4. Right-click (or Control-click) the Mellow icon and select **Open**.
+5. When prompted by macOS, click **Open** to confirm. (You only need to do this the very first time you open the app).
+
+### Linux
+
+You can install Mellow using either a package or an AppImage:
+
+- **Debian / Ubuntu (.deb)**:
+  Download `Mellow_*_amd64.deb` and install it through your package manager, or run:
+  ```bash
+  sudo dpkg -i Mellow_*_amd64.deb
+  ```
+- **AppImage**:
+  Download `Mellow_*.AppImage`, make it executable, and run it:
+  ```bash
+  chmod +x Mellow_*.AppImage
+  ./Mellow_*.AppImage
+  ```
+
+### Android
+
+1. Download `Mellow-universal-release.apk` directly to your phone (or transfer it from your computer).
+2. Open your phone's file manager or downloads list and tap the `.apk` file.
+3. If your phone asks for permission to install apps from this source, tap **Settings** and turn on **Allow from this source**, then continue the installation.
+4. **Important battery setting**: When you first connect, Mellow will ask for permission to ignore battery optimizations. Choose **Allow**. This ensures Android does not turn off the app when your screen is locked, allowing you to receive notifications reliably. On phones with strict battery savers (such as Xiaomi, Samsung, or OnePlus), check your phone's Settings and set Mellow's battery usage to "Unrestricted".
+
+## Getting Started
+
+1. Open the Mellow app.
+2. On the **Connect** screen:
+   - If your server is discovered automatically on your network, click its address in the list.
+   - Otherwise, enter the server address manually (for example, `192.168.1.5` or `192.168.1.5:6767`).
+3. Click **Connect**.
+4. Log in with your Mellow username and password.
+
+The app will remember your server for future launches. If you ever need to change servers, you can use the tray menu on desktop or the "Change server" button on mobile.
+
+---
+
+## For Developers and Advanced Users
+
+This section contains technical information for building and modifying Mellow Client from source code.
+
+### Desktop Development Setup
+
+Mellow Client is built with Tauri v2 (Rust backend with a web frontend).
+
+Prerequisites:
+- Node.js and npm
+- Rust (`rustc` and `cargo`)
+- WebView2 runtime (pre-installed on Windows 10 and 11)
+- C++ build tools (Visual Studio Build Tools on Windows, Xcode tools on macOS, or build-essential on Linux)
+
+Commands:
 
 ```bash
+# Install dependencies
 npm install
-npm run dev      # tauri dev (first run compiles Rust — slow once)
+
+# Run in development mode
+npm run dev
+
+# Build the desktop installer
+npm run build
 ```
 
-## Build the installer
+The compiled installer will be located in:
+`src-tauri/target/release/bundle/`
 
-```bash
-npm run build    # emits src-tauri/target/release/bundle/nsis/Mellow_x64-setup.exe
-```
+### Android Development Setup
 
-Requires: Rust (rustc/cargo), WebView2 runtime (preinstalled on Win 10/11), VS Build Tools.
-
-## Installing prebuilt installers (from GitHub Releases)
-
-All installers are **unsigned** (no paid Apple/Windows dev certs). First launch needs
-one manual bypass per OS:
-
-- **Windows** — run `Mellow_x64-setup.exe` normally (may show SmartScreen → *More info* → *Run anyway*).
-- **macOS** — download `Mellow_*_universal.dmg`, open it, drag Mellow to Applications, then
-  **right-click → Open** once (Gatekeeper). If still blocked: `xattr -cr /Applications/Mellow.app`.
-- **Linux** — `sudo dpkg -i Mellow_*_amd64.deb` (then `sudo apt -f install` if deps are pulled),
-  or `chmod +x Mellow_*.AppImage && ./Mellow_*.AppImage`. AppImage tray icon needs the
-  GNOME *AppIndicator* extension; the app still runs windowed without it.
-
-Browser users keep using the `https://` server URL directly — nothing here is required for that.
-
-## Android Client
-
-Mellow runs natively on Android via Tauri v2 Mobile with full feature parity:
-- **LAN Chat & Voice Calls**: Full WebRTC voice calls and camera support over LAN.
-- **Localhost Reverse Proxy**: Transparently tunnels the self-signed HTTPS server through `http://127.0.0.1:<port>` over loopback, ensuring Chromium/Android System WebView treats the origin as a secure context.
-- **Keep-Alive Foreground Service (FGS)**: Runs a background keep-alive service (`MellowKeepAliveService`, type `remoteMessaging`) holding a persistent notification ("Mellow — connected") and a partial wake lock while connected. This prevents Android 12+ from freezing the process or suspending WebSocket networking when the screen is locked or idle in your pocket.
-- **Zero Server Changes / No Cloud Dependency**: Operates entirely offline on LAN with zero reliance on Google Play Services or Firebase Cloud Messaging (FCM).
-- **Navigation & Mobile UX**: System Back button minimizes the app without closing the background service. An injected "Change server" button cleanly disconnects, terminates the service, and returns to the saved server launcher.
-
-### Toolchain Matrix
-
-To build the Android client on Windows/Linux/macOS, install:
-- **Java**: JDK 21 (Temurin / OpenJDK 21) with `JAVA_HOME` configured
-- **Android SDK**: Platforms 34–36, `build-tools 35.0.0` or `36.0.0`
-- **Android NDK**: NDK r27 (`27.0.12077973`) with `NDK_HOME` configured
-- **Tauri Tooling**: `@tauri-apps/cli` 2.11.4 / Tauri 2.11.5 / wry 0.55.1
-- **Rust Android Targets**:
+Prerequisites:
+- JDK 21 (Temurin or OpenJDK 21) with `JAVA_HOME` set
+- Android SDK (Platforms 34 to 36, build-tools 35.0.0 or 36.0.0)
+- Android NDK (NDK r27 / `27.0.12077973`) with `NDK_HOME` set
+- Rust Android targets:
   ```bash
   rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
   ```
 
-### Build & Signing Commands
+#### Keystore Setup
 
-#### 1. Setup Signing
-Generate a self-signed release keystore (one-time):
+Generate a release keystore (one-time setup):
 ```bash
 keytool -genkeypair -keystore src-tauri/gen/android/mellow-release.keystore -alias mellow -keyalg RSA -keysize 2048 -validity 10000
 ```
-Create `src-tauri/gen/android/keystore.properties` (ignored by git, see `keystore.properties.example`):
+
+Create `src-tauri/gen/android/keystore.properties` (based on `keystore.properties.example`):
 ```properties
 storeFile=mellow-release.keystore
 storePassword=your_store_password
@@ -93,45 +134,26 @@ keyAlias=mellow
 keyPassword=your_key_password
 ```
 
-#### 2. Development & Emulators
-Run on a connected device or Android Studio emulator (e.g. API 34+ x86_64):
+#### Android Commands
+
 ```bash
+# Run on an emulator or connected device
 npx tauri android dev
-```
 
-#### 3. Build Signed Release APKs
-```bash
-# Build universal release APK (all ABIs)
+# Build the release APK
 npx tauri android build --apk
-
-# Output APK location:
-# Mellow-universal-release.apk (copied automatically to repo root)
-# Also in: src-tauri/gen/android/app/build/outputs/apk/universal/release/Mellow-universal-release.apk
 ```
 
-### Sideloading & Installation Notes
+The APK file will be saved at the repository root as `Mellow-universal-release.apk`.
 
-1. **Install via ADB**:
-   ```bash
-   adb install -r Mellow-universal-release.apk
-   ```
-2. **Install via Device Storage (Files app)**:
-   - Transfer `Mellow-universal-release.apk` to your phone (via USB, NAS, or local share).
-   - Open your file manager, tap the APK, and allow "Install unknown apps" when prompted.
-3. **OEM Battery Optimization**:
-   - On first connect, Mellow will request exemption from battery optimizations. Tap **Allow** so Android doesn't throttle background LAN connectivity.
-   - For aggressive OEM task killers (Xiaomi MIUI/HyperOS, Samsung OneUI, OnePlus/Oppo ColorOS), ensure Mellow is set to "No restrictions" or "Unrestricted" under app battery settings.
-4. **WebView Compatibility**:
-   - WebRTC voice calls require Chromium / Android System WebView ≥ 89 (which supports loopback secure contexts). Any device with Google Play auto-updates enabled satisfies this.
+### Architecture Notes
 
+- **Localhost Reverse Proxy**: On macOS, Linux, and Android, the client proxies self-signed server HTTPS traffic through `http://127.0.0.1:<port>`. This allows WebRTC voice calls and camera access to work in WebKit and Android WebView without requiring a custom certificate authority.
+- **Android Background Service**: A foreground service (`MellowKeepAliveService`) runs on Android with a persistent notification and wake lock while connected, preventing the operating system from suspending WebSocket connections when the device is idle.
+- **Zero Cloud Dependency**: Operates entirely over local network connections without Firebase Cloud Messaging or third-party push notification services.
 
+### Project Layout
 
-## Repo map
-
-- `launcher/` — the connect screen (plain HTML/CSS/JS)
-- `src-tauri/` — Rust shell: commands (`connect`, `scan_lan`, `desktop_notify`, …), tray, NSIS bundling
-- `SPIKE.md` — verification checklist / results for webview behaviors
-
-Note: the dev/release binary is `mellow-client.exe`; the installed app is **Mellow.exe**
-(start menu / desktop, per `productName`). Uninstalling removes only app files — chat data
-lives on the server, and `%APPDATA%\dev.mellow.client` (saved servers) is left in place.
+- `launcher/`: Connect screen frontend (HTML, CSS, JavaScript).
+- `src-tauri/`: Native application shell written in Rust, handling window management, system tray, local network scanning, and notifications.
+- `src-tauri/gen/android/`: Android project files and background service implementation.
